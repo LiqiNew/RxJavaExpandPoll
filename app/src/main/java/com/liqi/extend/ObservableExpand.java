@@ -6,32 +6,18 @@ import com.liqi.operators.OnSubscribeTimerPeriodically;
 
 import java.util.concurrent.TimeUnit;
 
-import rx.Observable;
-import rx.Scheduler;
-import rx.plugins.RxJavaHooks;
-import rx.schedulers.Schedulers;
+import io.reactivex.Observable;
+import io.reactivex.Scheduler;
+import io.reactivex.plugins.RxJavaPlugins;
+import io.reactivex.schedulers.Schedulers;
+
 
 /**
  * 继承rxjava-Observable扩展类
  * Created by LiQi on 2017/9/6.
  */
 
-public class ObservableExpand<V, T> extends Observable<T> {
-
-    final OnSubscribeTimerPeriodically<V, T> onSubscribeTimerPeriodically;
-
-    /**
-     * Creates an Observable with a Function to execute when it is subscribed to.
-     * <p>
-     * <em>Note:</em> Use {@link #create(OnSubscribe)} to create an Observable, instead of this constructor,
-     * unless you specifically have a need for inheritance.
-     *
-     * @param f {@link OnSubscribe} to be executed when {@link #subscribe(Subscriber)} is called
-     */
-    protected ObservableExpand(OnSubscribe<T> f, OnSubscribeTimerPeriodically<V, T> onSubscribe1) {
-        super(f);
-        onSubscribeTimerPeriodically = onSubscribe1;
-    }
+public class ObservableExpand {
 
 
     /**
@@ -86,13 +72,13 @@ public class ObservableExpand<V, T> extends Observable<T> {
          * @param transferValue  待处理或者待传输的对象
          * @return
          */
-        public ObservableExpand<V, T> subscribeOn(Scheduler eventScheduler, V transferValue) {
+        public Observable<T> subscribeOn(Scheduler eventScheduler, V transferValue) {
 
-            OnSubscribeTimerPeriodically<V, T> timerPeriodically = new OnSubscribeTimerPeriodically<>(initialDelay, period, unit, Schedulers.computation());
+            OnSubscribeTimerPeriodically<V, T> timerPeriodically = new OnSubscribeTimerPeriodically<>(Math.max(0L, initialDelay), Math.max(0L, period), unit, Schedulers.computation());
             timerPeriodically.setOnObserverEventListener(observerEventListener);
             timerPeriodically.setTransferValue(transferValue);
             timerPeriodically.setEventScheduler(eventScheduler);
-            return new ObservableExpand<>(RxJavaHooks.onCreate(timerPeriodically), timerPeriodically);
+            return RxJavaPlugins.onAssembly(timerPeriodically);
         }
     }
 }

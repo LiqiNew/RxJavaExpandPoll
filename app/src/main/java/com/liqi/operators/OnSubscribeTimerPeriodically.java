@@ -1,20 +1,24 @@
 package com.liqi.operators;
 
-import java.util.concurrent.TimeUnit;
+import android.util.Log;
 
-import rx.Observable;
-import rx.Scheduler;
-import rx.Subscriber;
-import rx.exceptions.Exceptions;
-import rx.functions.Action0;
-import rx.schedulers.Schedulers;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+
+import io.reactivex.Observable;
+import io.reactivex.Observer;
+import io.reactivex.Scheduler;
+import io.reactivex.disposables.Disposable;
+import io.reactivex.internal.disposables.DisposableHelper;
+import io.reactivex.schedulers.Schedulers;
+
 
 /**
  * 订阅者间隔计时器(轮询)对象
  * Created by LiQi on 2017/9/6.
  */
 
-public final class OnSubscribeTimerPeriodically<V, T> implements Observable.OnSubscribe<T> {
+public final class OnSubscribeTimerPeriodically<V, T> extends Observable<T> {
     /**
      * 初始化加载延迟
      */
@@ -43,6 +47,7 @@ public final class OnSubscribeTimerPeriodically<V, T> implements Observable.OnSu
      * 传输给被观察者接受的对象
      */
     private V transferValue;
+    private Disposable disposable;
 
     public OnSubscribeTimerPeriodically(long initialDelay, long period, TimeUnit unit, Scheduler scheduler) {
         this.initialDelay = initialDelay;
@@ -80,79 +85,122 @@ public final class OnSubscribeTimerPeriodically<V, T> implements Observable.OnSu
         this.eventListener = eventListener;
     }
 
-    @Override
-    public void call(final Subscriber<? super T> subscriber) {
-        //子线程调度器执行
-        final Scheduler.Worker worker = Schedulers.io().createWorker();
-        subscriber.add(worker);
-        //开启子线程调度器定时器执行
-        worker.schedulePeriodically(new Action0() {
-            @Override
-            public void call() {
-                try {
-                    synchronized (OnSubscribeTimerPeriodically.this) {
-                        //被观察事件处理的调度器
-                        final Scheduler.Worker workerEvent = eventScheduler.createWorker();
-                        workerEvent.schedule(new Action0() {
-                            @Override
-                            public void call() {
-                                if (null != eventListener) {
-                                    try {
-                                        final T observerEvent = eventListener.onObserverEvent(transferValue);
-
-                                        //观察者事件处理的调度器
-                                        final Scheduler.Worker workerDispose = scheduler.createWorker();
-                                        workerDispose.schedule(new Action0() {
-                                            @Override
-                                            public void call() {
-                                                try {
-                                                    subscriber.onNext(observerEvent);
-                                                    awake();
-                                                } catch (Throwable e) {
-                                                    try {
-                                                        worker.unsubscribe();
-                                                        workerEvent.unsubscribe();
-                                                        workerDispose.unsubscribe();
-                                                        awake();
-                                                    } finally {
-                                                        Exceptions.throwOrReport(e, subscriber);
-                                                    }
-                                                }
-                                            }
-                                        });
-                                    } catch (Throwable e) {
-                                        try {
-                                            worker.unsubscribe();
-                                            workerEvent.unsubscribe();
-                                            awake();
-                                        } finally {
-                                            Exceptions.throwOrReport(e, subscriber);
-                                        }
-                                    }
-                                }
-                            }
-                        });
-                        //当前线程休眠，等待"被观察者"事件逻辑处理完毕
-                        OnSubscribeTimerPeriodically.this.wait();
-                    }
-                } catch (Throwable e) {
-                    try {
-                        worker.unsubscribe();
-                    } finally {
-                        Exceptions.throwOrReport(e, subscriber);
-                    }
-                }
-            }
-
-        }, initialDelay, period, unit);
-    }
-
     /**
      * 观察者已经根据被观察者的动作做出相应处理后唤醒调度器定时器继续往下走
      */
     private void awake() {
         synchronized (OnSubscribeTimerPeriodically.this) {
             OnSubscribeTimerPeriodically.this.notify();
+        }
+    }
+
+    @Override
+    protected void subscribeActual(Observer<? super T> observer) {
+
+        final Observer<? super T> observerNew = observer;
+
+        //子线程调度器执行
+        final Scheduler.Worker worker = Schedulers.io().createWorker();
+
+        IntervalObserver is = new IntervalObserver() {
+
+            @Override
+            void runStart() throws Exception {
+                synchronized (OnSubscribeTimerPeriodically.this) {
+                    //被观察事件处理的调度器
+                    final Scheduler.Worker workerEvent = eventScheduler.createWorker();
+                    workerEvent.schedule(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (null != eventListener) {
+                                try {
+                                    final T observerEvent = eventListener.onObserverEvent(transferValue);
+
+                                    //观察者事件处理的调度器
+                                    final Scheduler.Worker workerDispose = scheduler.createWorker();
+                                    workerDispose.schedule(new Runnable() {
+                                        @Override
+                                        public void run() {
+                                            try {
+                                                observerNew.onNext(observerEvent);
+                                                end();
+                                            } catch (Throwable e) {
+                                                disposable.dispose();
+                                                disposable = null;
+                                                eventScheduler = null;
+                                                eventListener = null;
+                                                end();
+                                                toThrowableString(e);
+                                            }
+                                        }
+                                    });
+                                } catch (Throwable e) {
+                                    disposable.dispose();
+                                    disposable = null;
+                                    eventScheduler = null;
+                                    eventListener = null;
+                                    end();
+                                    toThrowableString(e);
+                                }
+                            }
+                        }
+                    });
+                    //当前线程休眠，等待"被观察者"事件逻辑处理完毕
+                    OnSubscribeTimerPeriodically.this.wait();
+                }
+            }
+        };
+        observerNew.onSubscribe(is);
+        disposable = worker.schedulePeriodically(is, initialDelay, period, unit);
+    }
+
+    private void end() {
+        awake();
+        System.gc();
+    }
+
+    private static abstract class IntervalObserver
+            extends AtomicReference<Disposable>
+            implements Disposable, Runnable {
+
+
+        private static final long serialVersionUID = 346773832286157679L;
+
+        private IntervalObserver() {
+        }
+
+        @Override
+        public void dispose() {
+            DisposableHelper.dispose(this);
+        }
+
+        @Override
+        public boolean isDisposed() {
+            return get() == DisposableHelper.DISPOSED;
+        }
+
+        @Override
+        public void run() {
+            if (get() != DisposableHelper.DISPOSED) {
+                try {
+                    runStart();
+                } catch (Exception e) {
+                    toThrowableString(e);
+                }
+            }
+        }
+
+
+        abstract void runStart() throws Exception;
+    }
+
+    private static void toThrowableString(Throwable e){
+        Log.e("Expand捕获","捕获异常：" + e.toString());
+        StackTraceElement[] stackTrace = e.getStackTrace();
+        if (null != stackTrace) {
+            for (StackTraceElement traceElement : stackTrace) {
+                Log.e("Expand捕获","捕获异常：" + traceElement.toString());
+            }
         }
     }
 }

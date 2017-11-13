@@ -3,6 +3,7 @@ package com.liqi;
 import android.os.Bundle;
 import android.support.v7.app.AppCompatActivity;
 import android.util.Log;
+import android.view.View;
 import android.widget.TextView;
 
 import com.liqi.extend.ObservableExpand;
@@ -10,12 +11,14 @@ import com.liqi.operators.OnObserverEventListener;
 
 import java.util.concurrent.TimeUnit;
 
-import rx.Observable;
-import rx.android.schedulers.AndroidSchedulers;
-import rx.functions.Action0;
-import rx.functions.Action1;
-import rx.functions.Func1;
-import rx.schedulers.Schedulers;
+import io.reactivex.Observable;
+import io.reactivex.android.schedulers.AndroidSchedulers;
+import io.reactivex.annotations.NonNull;
+import io.reactivex.functions.Consumer;
+import io.reactivex.functions.Function;
+import io.reactivex.functions.Predicate;
+import io.reactivex.schedulers.Schedulers;
+
 
 public class MainActivity extends AppCompatActivity {
     int expandNumber, rxJavaNumber;
@@ -26,9 +29,24 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
         mExpandPollText = (TextView) findViewById(R.id.expand_poll_text);
+        mExpandPollText.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                expandNumber=0;
+                mExpandPollText.setText("");
+                expandPoll("自定义扩展轮询");
+            }
+        });
         mRxjavaPollText = (TextView) findViewById(R.id.rxjava_poll_text);
-        expandPoll("自定义扩展轮询");
-        rxJavaPoll("RxJava原生轮询");
+        mRxjavaPollText.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                rxJavaNumber=0;
+                mRxjavaPollText.setText("");
+                rxJavaPoll("RxJava原生轮询");
+
+            }
+        });
     }
 
     /**
@@ -57,9 +75,9 @@ public class MainActivity extends AppCompatActivity {
                 //指定被观察者行为监听器执行线程。传输对象进被观察者行为监听器
                 .subscribeOn(Schedulers.io(), transitionList)
                 //设置拦截器
-                .takeUntil(new Func1<String, Boolean>() {
+                .takeUntil(new Predicate<String>() {
                     @Override
-                    public Boolean call(String untilData) {
+                    public boolean test(@NonNull String s) throws Exception {
                         //执行10次自动停止轮询，也可根据untilData对象值去判断是否停止轮询
                         if (expandNumber >= 10) {
                             return true;
@@ -71,11 +89,12 @@ public class MainActivity extends AppCompatActivity {
                 //指定观察者触发监听器执行线程
                 .observeOn(AndroidSchedulers.mainThread())
                 //观察者触发监听器
-                .subscribe(new Action1<String>() {
+                .subscribe(new Consumer<String>() {
                     @Override
-                    public void call(String s) {
+                    public void accept(String s) throws Exception {
                         String toString = mExpandPollText.getText().toString();
                         mExpandPollText.setText(s + "\n\n" + toString);
+                       // mExpandPollText.invalidate();
                     }
                 });
     }
@@ -89,9 +108,9 @@ public class MainActivity extends AppCompatActivity {
         //创建轮询器
         Observable.interval(3000, 3000, TimeUnit.MILLISECONDS)
                 //数据处理行动监听器--->>此处不可以线程切换
-                .map(new Func1<Long, String>() {
+                .map(new Function<Long, String>() {
                     @Override
-                    public String call(Long aLong) {
+                    public String apply(@NonNull Long aLong) throws Exception {
                         Log.e("RxJavaPoll", "map-->call--->Run");
 
                         try {
@@ -105,9 +124,9 @@ public class MainActivity extends AppCompatActivity {
                     }
                 })
                 //轮询拦截器
-                .takeUntil(new Func1<String, Boolean>() {
+                .takeUntil(new Predicate<String>() {
                     @Override
-                    public Boolean call(String s) {
+                    public boolean test(@NonNull String o) throws Exception {
                         //执行10次自动停止轮询
                         if (rxJavaNumber >= 10) {
                             return true;
@@ -119,9 +138,9 @@ public class MainActivity extends AppCompatActivity {
                 //订阅者事件处理器线程切换
                 .observeOn(AndroidSchedulers.mainThread())
                 //订阅者事件处理监听器
-                .subscribe(new Action1<String>() {
+                .subscribe(new Consumer<String>() {
                     @Override
-                    public void call(String transferValue) {
+                    public void accept(String transferValue) throws Exception {
                         String toString = mRxjavaPollText.getText().toString();
                         mRxjavaPollText.setText(transferValue + "\n\n" + toString);
                     }
